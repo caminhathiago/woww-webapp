@@ -1,7 +1,7 @@
 .aws/
-data/
 build/
 .env
+*.csv
 *.txt
 *.pyc
 
