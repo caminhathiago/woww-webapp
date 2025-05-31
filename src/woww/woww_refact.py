@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from pydantic import validate_call
 
@@ -7,7 +8,7 @@ import numpy as np
 import xarray as xr
 
 import plotly.graph_objects as go
-
+from plotly.graph_objs import Figure
 
 
 class MaritimeOperation:
@@ -189,61 +190,65 @@ class Analysis:
 
 
 class Plot:
-    @validate_call(config={"arbitrary_types_allowed": True})
-    def __init__(self, analysis):
-        self.analysis = analysis
-        self.operation = self.analysis.operation
+    """Handles plotting routines for the Analysis class."""
 
-    def plot_wowws_timeseries(self) -> None:
+    def __init__(self, analysis: Any) -> None:
+        self.analysis = analysis
+        self.operation = analysis.operation
+        self.data = analysis.data_wowws
+        self.wowws = analysis.wowws
+
+    @validate_call(config={"arbitrary_types_allowed": True})
+    def plot_wowws_timeseries(self) -> Figure:
+        """Generates a dual-y axis time series plot with WOWW and operation highlights."""
         fig = go.Figure()
 
-        data = self.analysis.data_wowws
-        wowws = self.analysis.wowws
+        self._add_primary_trace(fig)
+        self._add_secondary_trace(fig)
+        self._add_wowws_highlights(fig)
+        self._add_operation_period(fig)
+        self._configure_layout(fig)
 
-        # Primary y-axis trace (value)
+        return fig
+
+    def _add_primary_trace(self, fig: Figure) -> None:
         fig.add_trace(go.Scatter(
-            x=data['date_time'], y=data['thgt'], 
-            mode='lines', name='Value',
-            yaxis='y1'
+            x=self.data['date_time'], y=self.data['thgt'],
+            mode='lines', name='Value', yaxis='y1'
         ))
 
-        # Secondary y-axis trace (tper)
+    def _add_secondary_trace(self, fig: Figure) -> None:
         fig.add_trace(go.Scatter(
-            x=data['date_time'], y=data['tper'], 
-            mode='lines', name='Tper',
-            yaxis='y2'
+            x=self.data['date_time'], y=self.data['tper'],
+            mode='lines', name='Tper', yaxis='y2'
         ))
 
-        # Add vertical highlight regions
-        for idx, row in wowws.iterrows():
+    def _add_wowws_highlights(self, fig: Figure) -> None:
+        for idx, row in self.wowws.iterrows():
             fig.add_vrect(
                 x0=row['start_date'], x1=row['end_date'],
-                fillcolor="green", opacity=0.3,
-                layer="below", line_width=0,
+                fillcolor="green", opacity=0.3, layer="below", line_width=0,
                 annotation_text=f"WOWW {idx}",
                 annotation_position="top left",
                 annotation=dict(font=dict(color="white"))
             )
 
-        # Operation period highlight
+    def _add_operation_period(self, fig: Figure) -> None:
         fig.add_vrect(
-            x0=self.operation.start_datetime, 
-            x1=self.operation.estimated_end_datetime, 
-            fillcolor="blue", opacity=0.3,
-            layer="below", line_width=0,
-            annotation_text=f"OPERATION",
+            x0=self.operation.start_datetime,
+            x1=self.operation.estimated_end_datetime,
+            fillcolor="blue", opacity=0.3, layer="below", line_width=0,
+            annotation_text="OPERATION",
             annotation_position="top right",
             annotation=dict(font=dict(color="white"))
         )
 
-        # Layout update for dual y-axes and styling
+    def _configure_layout(self, fig: Figure) -> None:
         fig.update_layout(
-            # title=dict(text="Time Series with Highlights and Twin Y-Axis", font=dict(color='white')),
-            font=dict(color='white'),  # General font color
-            height=200,  # match the container height
-            margin=dict(l=0, r=0, t=0, b=0),  # remove all outer space
+            font=dict(color='white'),
+            height=200,
+            margin=dict(l=0, r=0, t=0, b=0),
             xaxis=dict(
-                # title=dict(text='Time', font=dict(color='white')),
                 tickfont=dict(color='white'),
                 color='white'
             ),
@@ -272,7 +277,92 @@ class Plot:
             plot_bgcolor='rgba(255, 255, 255, 0.1)'
         )
 
-        return fig
+
+# class Plot:
+#     @validate_call(config={"arbitrary_types_allowed": True})
+#     def __init__(self, analysis):
+#         self.analysis = analysis
+#         self.operation = self.analysis.operation
+
+#     def plot_wowws_timeseries(self) -> None:
+#         fig = go.Figure()
+
+#         data = self.analysis.data_wowws
+#         wowws = self.analysis.wowws
+
+#         # Primary y-axis trace (value)
+#         fig.add_trace(go.Scatter(
+#             x=data['date_time'], y=data['thgt'], 
+#             mode='lines', name='Value',
+#             yaxis='y1'
+#         ))
+
+#         # Secondary y-axis trace (tper)
+#         fig.add_trace(go.Scatter(
+#             x=data['date_time'], y=data['tper'], 
+#             mode='lines', name='Tper',
+#             yaxis='y2'
+#         ))
+
+#         # Add vertical highlight regions
+#         for idx, row in wowws.iterrows():
+#             fig.add_vrect(
+#                 x0=row['start_date'], x1=row['end_date'],
+#                 fillcolor="green", opacity=0.3,
+#                 layer="below", line_width=0,
+#                 annotation_text=f"WOWW {idx}",
+#                 annotation_position="top left",
+#                 annotation=dict(font=dict(color="white"))
+#             )
+
+#         # Operation period highlight
+#         fig.add_vrect(
+#             x0=self.operation.start_datetime, 
+#             x1=self.operation.estimated_end_datetime, 
+#             fillcolor="blue", opacity=0.3,
+#             layer="below", line_width=0,
+#             annotation_text=f"OPERATION",
+#             annotation_position="top right",
+#             annotation=dict(font=dict(color="white"))
+#         )
+
+#         # Layout update for dual y-axes and styling
+#         fig.update_layout(
+#             # title=dict(text="Time Series with Highlights and Twin Y-Axis", font=dict(color='white')),
+#             font=dict(color='white'),  # General font color
+#             height=200,  # match the container height
+#             margin=dict(l=0, r=0, t=0, b=0),  # remove all outer space
+#             xaxis=dict(
+#                 # title=dict(text='Time', font=dict(color='white')),
+#                 tickfont=dict(color='white'),
+#                 color='white'
+#             ),
+#             yaxis=dict(
+#                 title=dict(text='Hs (m)', font=dict(color='white')),
+#                 side='left',
+#                 showgrid=True,
+#                 zeroline=False,
+#                 tickfont=dict(color='white'),
+#                 color='white'
+#             ),
+#             yaxis2=dict(
+#                 title=dict(text='Tp (s)', font=dict(color='white')),
+#                 overlaying='y',
+#                 side='right',
+#                 showgrid=False,
+#                 zeroline=False,
+#                 tickfont=dict(color='white'),
+#                 color='white'
+#             ),
+#             legend=dict(
+#                 x=0.01, y=0.99,
+#                 font=dict(color='white')
+#             ),
+#             paper_bgcolor='rgba(0,0,0,0)',
+#             plot_bgcolor='rgba(255, 255, 255, 0.1)'
+#         )
+
+#         return fig
  
     
     

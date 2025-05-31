@@ -1,0 +1,80 @@
+/* styles.css */
+
+body {
+  font-family: 'Roboto', sans-serif;
+  font-size: 10px;
+  margin: 0;
+  padding: 0;
+}
+
+label {
+  font-weight: 500;
+  margin-right: 6px;
+  font-size: 9px;
+}
+
+input {
+  font-size: 9px;
+}
+
+#input-box {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background-color: rgba(255, 255, 255, 0.3);
+  padding: 12px;
+  border-radius: 0px;
+  z-index: 1001;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.15);
+  width: 240px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+#input-box h3 {
+  margin-bottom: 15px;
+  font-size: 14px;
+}
+
+#input-box h5 {
+  margin-top: 0;
+  color: #333;
+  font-size: 12px;
+}
+
+#generate-button {
+  margin-top: 10px;
+  width: 100%;
+  display: none;
+}
+
+#plot-container {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 200px;
+  z-index: 1000;
+  display: block;
+  background-color: transparent;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.2);
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+#timeseries-plot {
+  height: 100%;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  background-color: transparent;
+}
+
+#map {
+  width: 100vw;
+  height: 100vh;
+  position: fixed;
+  z-index: 1;
+}
