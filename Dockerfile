@@ -16,4 +16,4 @@ RUN pip install .
 EXPOSE 8050
 
 # Run the app
-CMD ["python", "app.py"]
+CMD ["python", "src/app.py"]
