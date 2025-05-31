@@ -240,7 +240,8 @@ class Plot:
         fig.update_layout(
             # title=dict(text="Time Series with Highlights and Twin Y-Axis", font=dict(color='white')),
             font=dict(color='white'),  # General font color
-
+            height=200,  # match the container height
+            margin=dict(l=0, r=0, t=0, b=0),  # remove all outer space
             xaxis=dict(
                 # title=dict(text='Time', font=dict(color='white')),
                 tickfont=dict(color='white'),

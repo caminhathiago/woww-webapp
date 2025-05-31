@@ -23,7 +23,7 @@ app.title = "Workable Weather Window Dashboard"
 
 default_lat = -32
 default_lon = 115
-default_start = "2025-05-31 00:49:51"  # empty default
+default_start = ""  # empty default
 default_duration = "1"
 default_fcf = "1"
 default_scf = "1"
@@ -117,16 +117,28 @@ app.layout = html.Div([
     dcc.Graph(
         id="timeseries-plot",
         config={"displayModeBar": False},
-        style={"height": "320px", "width": "980px"}  # Graph size
+        style={
+            "height": "100%",
+            "width": "100%",
+            "padding": "0",
+            "margin": "0",
+            "overflow": "hidden",
+            "backgroundColor": "transparent"
+        }  # Graph size
     )
 ], id="plot-container", style={
-    "position": "fixed",         # Fixed to the viewport
-    "bottom": "0px",             # Stick to the bottom
-    "left": "0px",               # Stick to the left
+    "position": "fixed",     # use fixed, not 'bottom left'
+    "bottom": "0px",
+    "left": "0px",
+    "width": "100%",        # full viewport width
+    "height": "200px",       # fixed height
     "zIndex": "1000",
-    "display": "none",
-    "boxShadow": "0 -2px 8px rgba(0,0,0,0.2)",  # Optional visual polish
-    "backgroundColor": "white"  # Optional background to prevent overlay transparency issues
+    "display": "block",
+    "backgroundColor": "transparent",
+    "boxShadow": "0 -2px 8px rgba(0,0,0,0.2)",
+    "padding": "0",
+    "margin": "0",
+    "overflow": "hidden"
 }),
  
     # Leaflet Map
@@ -305,9 +317,7 @@ def generate_plot(n_clicks, lat, lon, start, duration, hs_limit, tp_limit, fcf):
     "bottom": "0px",      # stick to the bottom
     "left": "0px",        # stick to the left
     "zIndex": "998",
-    "width": "980px",
-    "height": "420px",
-    "display": "block",
+    "display": "block"
 }
 
 
