@@ -1,0 +1,8 @@
+pandas
+xarray
+matplotlib
+dotenv
+erdappy
+pydantic
+dash
+dash-leaflet
