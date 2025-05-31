@@ -8,7 +8,7 @@ import plotly.graph_objs as go
 
 from woww.api.erddap import ErddapData
 from woww.process.erddap import WW3Processor
-from woww.woww_refact import MaritimeOperation, ForecastData, Analysis, Plot
+from woww.woww import MaritimeOperation, ForecastData, Analysis, Plot
 
 def register_callbacks(app):
     @app.callback(

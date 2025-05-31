@@ -1,547 +1,406 @@
-from ctypes import alignment
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from pydantic import validate_call
+
 import pandas as pd
 import numpy as np
 import xarray as xr
 
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
-import matplotlib.dates as mdates
-from matplotlib.lines import Line2D
-from matplotlib.font_manager import FontProperties
-
 import plotly.graph_objects as go
+from plotly.graph_objs import Figure
 
 
-class WOWWAnalysis:
-
-    def __init__(self,
-                 data:pd.DataFrame,
-                 tpop:pd.Timedelta,
-                op_start:pd.Timedelta,
-                cont_factor:float=1,
-                cont_factor2:float=1,
-                wf_issuance:pd.Timedelta=None,
-                swvht_limit:float=None,
-                tper_limit:float=None,
-                cvel_limit:float=None,
-                alpha_factor:float=None,
-                td_woww_threshold:pd.Timedelta=pd.Timedelta(1, unit='H'),
-                toggle_op:bool=False,
-                toggle_op_plot:bool=False,
-                figsize:tuple=(12, 3)):
-        
-        self.data = data
-        self.op_start = op_start
-        self.tpop = pd.Timedelta(tpop, 'h')
-        self.tpop_h = self.tpop_h()
-        self.cont_factor = cont_factor
-        self.cont_factor2 = cont_factor2
-        self.wf_issuance = wf_issuance
-        self.wf_from_op = self.wf_from_op()
-        self.swvht_limit = swvht_limit
-        self.tper_limit = tper_limit
-        self.cvel_limit = cvel_limit
-        self.alpha_factor = alpha_factor
-        self.td_woww_threshold = td_woww_threshold
-        self.figsize = figsize
-
-        self.cont_time = self.cont_time()
-        self.op_time = self.op_time()
-
-        self.wowws_datetimes = self.wowws_datetimes()
-        self.wowws = self.get_wowws()
-        self.wowws_data = self.wowws_data()
-
-        try:
-            
-
-            self.wowws_data = self.wowws_data()
-            self.stats_table = self.stats_table()
-            self.time_reference = self.time_reference()
-            self.wowws_allowed = self.wowws_allowed()
-            self.wowws_allowed_data = self.wowws_allowed_data()
-            self.stats_table_allowed = self.stats_table_allowed()
-
-            self.status = f"{len(self.wowws.columns)} Workable weather windows were found.\n{len(self.wowws_allowed.columns)} within the calculated Time Reference."
-        except:
-            self.status = "No Workable Weather Windows found for the period."
-
-
-    def wowws_datetimes(self):
-        """
-        Returns an array of WOWWs datetimes.
-
-        """
-
-        hs_condition = (self.data['thgt'] < self.swvht_limit)
-        tp_condition = (self.data['tper'] < self.tper_limit)
-
-        return self.data.loc[hs_condition & tp_condition].index
+class MaritimeOperation:
     
-    def get_wowws(self):
-        """
-        Dataframe of WOWWs with start datetimes,  end datetimes
-        and duration.
+    @validate_call
+    def __init__(self, 
+                 thgt_limit:float,
+                 tper_limit:float,
+                 start_datetime:datetime,
+                 duration:timedelta,
+                 first_contingency_factor:float,
+                 second_contingency_factor:float):
 
-        """
-
-        if self.wowws_datetimes.size > 0:
-            self._wowws_list = [self.wowws_datetimes.min()]
-            for i in range(len(self.wowws_datetimes)-1):
-                diff = pd.Timedelta(self.wowws_datetimes[i+1]- self.wowws_datetimes[i])
-                if diff > self.td_woww_threshold:
-                    self._wowws_list.append(self.wowws_datetimes[i])
-                    self._wowws_list.append(self.wowws_datetimes[i+1])
-                
-            self._wowws_list.append(self.wowws_datetimes.max())
-
-            self._wowws_array = np.array(self._wowws_list)
-            start_datetimes = self._wowws_array[0::2]
-            end_datetimes = self._wowws_array[1::2]
-            self._wowws_array = np.c_[start_datetimes, end_datetimes]
-
-            wowws = pd.DataFrame(self._wowws_array.T, index=['START', 'END'])#, columns=cols_named)#, index=idexes_named)
-
-            cols = np.arange(1, len(wowws.columns)+1).astype('str')
-            append_str = 'WINDOW '
-            cols_named = [append_str + window_number for window_number in cols]
-            wowws.columns = cols_named
-            transp_wowws = wowws.T
-            transp_wowws['DURATION'] = wowws.T.diff(axis=1)['END'].values
-            wowws = transp_wowws.T
-
-            return wowws.T
+        self.thgt_limit = thgt_limit
+        self.tper_limit = tper_limit
+        if start_datetime.tzinfo is None:
+            self.start_datetime = start_datetime.replace(tzinfo=timezone.utc)
         else:
-            return 
+            self.start_datetime = start_datetime.astimezone(timezone.utc)
+        self.duration = duration
+        self.first_contingency_factor = first_contingency_factor
+        self.second_contingency_factor = second_contingency_factor
+
+    @property
+    def contingency_time(self) -> timedelta:
+        if self.first_contingency_factor < 1:
+            raise ValueError("Contingency factor must be equal or greater than 1.")
+        else:
+            return self.duration * self.first_contingency_factor
         
-    def wowws_allowed(self):
-        """
-        Dataframe of WOWWs that encompasses the calculated
-        time reference for the operation (i.e. duration of woww > time reference)
-        """
-
-        # SELECT ALLOWED WOWWS BASED ON OPERATION TIME REFERENCE
-        tc2 = self.cont_time * self.cont_factor2 # contingency time 2 - to make sure tr is safely within a woww
-
-        wowws_allowed = []
-        for woww_name in self.wowws.loc['DURATION'].index:
-            woww_duration = self.wowws.loc['DURATION', woww_name]
-            if woww_duration > (self.time_reference + tc2):
-                wowws_allowed.append(woww_name)
-
-        wowws_allowed = self.wowws[wowws_allowed]
-
-        indexes = wowws_allowed.columns.str.replace('WINDOW ', '').astype('int')-1
-
-        # self._wowws_allowed_array = _wowws_allowed_array[indexes]
-
-        return wowws_allowed
-
-    def wowws_data(self):
-        """
-        Dataframe of parameters data for each WOWW. Used to perform statistics.
-        """
-
-        # generate dataframe for statistics performance
-        wowws_data = pd.DataFrame([], index=self.data['date_time'].values)
-
-        for woww_per, i in zip(self._wowws_array, range(1, len(self._wowws_array)+1)):
-            thgt = self.data['thgt'].sel(time=slice(woww_per[0], woww_per[1]))
-            tper = self.data['tper'].sel(time=slice(woww_per[0], woww_per[1]))
-            # cvel = self.data['cvel'].sel(time=slice(woww_per[0], woww_per[1]))
-            data = np.array([thgt.values, tper.values]).T
-            data_local = pd.DataFrame(data, index=thgt['date_time'].values, columns=[f'thgt_{i}', f'tper_{i}'])
-            wowws_data = wowws_data.append(data_local)
-
-        return wowws_data
+    @property
+    def time_reference(self) -> timedelta:
+        return self.duration + self.contingency_time
+    
+    @property
+    def estimated_end_datetime(self) -> datetime:
+        return self.start_datetime + self.time_reference
 
 
-    def wowws_allowed_data(self):
-        """
-        Returns data from allowed wowws
-        """
-        wowws_allowed_numbers = self.wowws_allowed.columns.str[-1]
-        pipe_str = '|'
-        reg_wowws_allowed_numbers = pipe_str.join(str(e) for e in wowws_allowed_numbers)
-        wowws_allowed_data = self.wowws_data.filter(regex=reg_wowws_allowed_numbers)
+class ForecastData:
+    @validate_call
+    def __init__(self, forecast_data:str):
+        self._forecast_data_file_name = forecast_data
 
-        return wowws_allowed_data
+    @property
+    def data(self) -> pd.DataFrame:
+        data = pd.read_csv(self._forecast_data_file_name)
+        time_col, _ = ForecastData.find_datetime_column(data)
+        data[time_col] = pd.to_datetime(data[time_col])
+        return data
 
+    @property
+    def last_issuance(self) -> datetime:
+        _, time_data = ForecastData.find_datetime_column(self.data)
+        return time_data.min().to_pydatetime()
+    
+    @property
+    def forecast_time_range(self) -> tuple[pd.Timestamp, pd.Timestamp]:
+        return ForecastData.get_time_range(self.data)
 
-    def stats_table(self):
-        """
-        Dataframe of descriptive statistics for each WOWW.
-        """
+    @staticmethod
+    def get_time_range(data:pd.DataFrame) -> tuple[pd.Timestamp, pd.Timestamp]:
+        _, time_data = ForecastData.find_datetime_column(data)
+        return time_data.min(), time_data.max()
 
-        stats = self.wowws_data.describe().loc[['mean', '50%', 'std']]
-
-        mean_std = stats.T['mean'].round(2).astype('str') + ' \u00B1 ' +stats.T['std'].round(3).astype('str')
-        median = stats.T['50%'].round(2).astype('str')
-        stats = stats.T
-        stats['mean_std'] = mean_std
-        stats['50%'] = median
-        stats = stats[['mean_std', '50%']]
-        stats = stats.T
-
-        stats_swvht = stats.filter(regex='swvht', axis=1)
-        stats_tper = stats.filter(regex='tper', axis=1)
-        stats_cvel = stats.filter(regex='cvel', axis=1)
-
-        stats_swvht = stats_swvht.rename({'mean_std':'Hs (mean \u00B1 std)', '50%': 'Hs (median)'})
-        stats_swvht.columns = stats_swvht.columns.str.replace('swvht_', 'WINDOW ')
-
-        stats_tper = stats_tper.rename({'mean_std':'Tp (mean \u00B1 std)', '50%': 'Tp (median)'})
-        stats_tper.columns = stats_tper.columns.str.replace('tper_', 'WINDOW ')
-
-        stats_cvel = stats_cvel.rename({'mean_std':'Cvel (mean \u00B1 std)', '50%': 'Cvel (median)'})
-        stats_cvel.columns = stats_cvel.columns.str.replace('cvel_', 'WINDOW ')
-
-        stats_table = self.wowws.copy()
-        stats_table = pd.concat([stats_table, stats_swvht, stats_tper, stats_cvel])
+    @staticmethod
+    def find_datetime_column(data:pd.DataFrame) -> tuple[str, pd.Series]:
+        for col in data.columns:
+            col_data = data[col]
+            if pd.api.types.is_datetime64_any_dtype(col_data):
+                return col, col_data
+            try:
+                parsed = pd.to_datetime(col_data, errors='raise')
+                return col, parsed
+            except (ValueError, TypeError):
+                continue
+        raise ValueError("No datetime-like column found in the DataFrame.")
 
 
-        return stats_table
 
+class Analysis:
+    @validate_call(config={"arbitrary_types_allowed": True})
+    def __init__(self, operation:MaritimeOperation, forecast:ForecastData):
+        self.operation = operation
+        self.forecast = forecast
+        self._validate_operation_time()
 
-    def stats_table_allowed(self):
-        """
-        Dataframe of descriptive statistics for each WOWW that encompasses the calculated
-        time reference for the operation (i.e. duration of woww > time reference)
-        """
+    @property
+    def time_from_last_isuance(self):
+        return self.operation.start_datetime - self.forecast.last_issuance
 
-        return self.stats_table.loc[:, self.wowws_allowed.columns]
+    def _validate_operation_time(self):
+        op_time = self.operation.start_datetime
+        forecast_start, forecast_end = self.forecast.forecast_time_range
+        if not(forecast_start <= op_time <= forecast_end):
+            raise ValueError(
+                f"Operation start time {op_time.isoformat()} is outside forecast range "
+                f"{forecast_start.isoformat()} to {forecast_end.isoformat()}"
+            )
 
+    @property
+    def _discrete_wowws(self) -> pd.DataFrame:
+        data = self.forecast.data.copy()
+        
+        limits_mask = ((data['thgt'] <= self.operation.thgt_limit) &
+                (data['tper'] <= self.operation.tper_limit)
+            )
+        
+        data['discrete_woww'] = False
+        if not limits_mask.empty:
+            data.loc[limits_mask, 'discrete_woww'] = True
 
-    def tpop_h(self):
-        """
-        Time of operational procedure in hours. Derived from Tpop.
-        """
+        return data
+    
+    @property
+    def _continuous_wowws(self) -> pd.DataFrame:
+        
+        rolling_class = self._discrete_wowws.copy()
+        
+        rolling_workable = (
+            rolling_class.set_index('date_time')
+            ['discrete_woww'].rolling(window=self.operation.duration)
+            .apply(lambda x: x.all(), raw=True)
+        )
+        rolling_class["continuos_woww"] = rolling_workable.reset_index()['discrete_woww'] == 1.0        
 
-        return pd.Timedelta(self.tpop, 'h')
+        return rolling_class
 
+    @property
+    def data_wowws(self) -> pd.DataFrame:
+        
+        id_wowws_data = self._continuous_wowws.copy()
+        
+        is_new_block = (id_wowws_data['continuos_woww'] & ~id_wowws_data['continuos_woww'].shift(fill_value=False)).astype(int)
+        id_wowws_data['woww_id'] = is_new_block.cumsum()
 
-    def cont_time(self):
-        """
-        The contingency time of the marine operation. Calculated with the
-        contingency factor
-        """
-        print(self.cont_factor)
-        print(self.tpop_h)
-        return pd.Timedelta(self.cont_factor*self.tpop_h, 'h')
+        id_wowws_data.loc[~id_wowws_data['continuos_woww'], 'woww_id'] = 0
 
-    def wf_from_op(self):
-        """
-        Duration from last weather forecast issuance to the estimated
-        beginning of the marine operation
-        """
-        return pd.Timedelta((self.op_start-self.wf_issuance), 'h')
+        return id_wowws_data
+    
+    @property
+    def wowws(self) -> pd.DataFrame:
+        wowws = self.data_wowws.copy()
+        wowws = (wowws
+                    .groupby('woww_id')['date_time']
+                    .agg(start_date='min', end_date='max')
+                    )
+        wowws['duration_d'] = Analysis.calculate_duration(wowws, format='days')
+        wowws['duration_h'] = Analysis.calculate_duration(wowws, format='hours')
+        wowws['duration_hhmm'] = Analysis.calculate_duration(wowws, format='hours_minutes')
+        wowws = wowws.drop(0)
+        return wowws
 
-
-    def time_reference(self):
-        """
-        Time reference of the marine operation.
-        """
-        return self.tpop_h + self.cont_time # + self.wf_from_op
-
-
-    def op_time(self):
-        """
-        Pandas Series with the operation time start datetime, end datetime
-        and duration.
-        """
-
-        wf_op_dur = self.op_start - self.wf_issuance
-        wf_op_dur = pd.Timedelta(wf_op_dur, 'h')
-
-
-        tr = self.tpop_h + self.cont_time # + wf_op_dur
-        op_end = self.op_start + tr
-        self.op_end = op_end
-        op_duration = op_end - self.op_start
-
-        op_time = pd.Series({'START':self.op_start,
-                            'END':op_end,
-                            'DURATION':op_duration})
-
-        return op_time
-
-
-    def woww_analysis(self,
-                      limits:bool=True,
-                      wowws:str='all',
-                      times:bool=True,
-                      stats:bool=True,
-                      op_period:bool=True,
-                      wowws_allowed:bool=True,
-                      op:bool=True):
-        """
-        A dashboard with relevant information regarding the WOWW analysis.
-        """
-
-        fig, ax = plt.subplots(1, 1, sharex=True, figsize=self.figsize)
-        # ax.grid(b=True, which='major', color='grey', linestyle='-', axis='x', alpha=0.3)
-        # ax.grid(b=True, which='minor', color='grey', linestyle='-', alpha=0.3)
-
-        ax2 = ax.twinx()
-        # ax3 = ax.twinx()
-        # ax3.spines['right'].set_position(("axes", 1.1))
-
-        # ax3.spines['left'].set_color('blue')
-        ax2.spines['right'].set_color('red')
-        # ax3.spines['right'].set_color('green')
-
-        ax.yaxis.label.set_color('blue')
-        ax2.yaxis.label.set_color('red')
-        # ax3.yaxis.label.set_color('green')
-
-        ax.tick_params(axis='y', colors='blue')
-        ax2.tick_params(axis='y', colors='red')
-        # ax3.tick_params(axis='y', colors='green')
-
-        swvht = self.data['thgt'].plot(ax=ax, color='blue', lw=1.5, zorder=2)
-        self.data['tper'].plot(ax=ax2, color='red', lw=1.5, zorder=2)
-        # self.data['cvel'].plot(ax=ax3, color='green', lw=1.5, zorder=2)
-
-        # FORMATING AXES AND TEXTS
-        # labels
-
-        ax.set_ylabel('Hs (m)')
-        ax.set_xlabel('Date-Month')
-        ax2.set_title('')
-        ax2.set_ylabel('Ts (s)')
-        # ax3.set_title('')
-        # ax3.set_ylabel('Current Vel (kt)')
-
-        if limits:
-            # titles
-            ax.set_title(f'Workable Weather Window Analysis - Waves and Currents \nLimits: Hs = {self.swvht_limit} m,  Ts = {self.tper_limit} s,  Cvel = {self.cvel_limit}',
-                    fontweight='bold', fontsize=10, pad=43)
-
-            # horizontal lines of limits
-            ax.axhline(self.swvht_limit, ls='dashed', color='blue', lw=1)
-            ax2.axhline(self.tper_limit, ls='dashed', color='red', lw=1)
-            # ax3.axhline(self.cvel_limit, ls='dashed', color='green', lw=1)
-
-            # legend
-            custom_lines = [Line2D([0], [0], color='blue', lw=1.5),
-                            Line2D([0], [0], color='blue', lw=1, ls='--'),
-                            Line2D([0], [0], color='red', lw=1.5),
-                            Line2D([0], [0], color='red', lw=1, ls='--'),
-                            Line2D([0], [0], color='limegreen',  lw=3),
-                            Line2D([0], [0], color='limegreen',  lw=1, ls='--')]
-                            # Line2D([0],  [0],  color='darkgreen',  lw=3),
-                            # Line2D([0],  [0],  color='darkgreen',  lw=1, ls='--')]
-            legend_names = ['Hs ', f'Hs limit ({self.swvht_limit} m)', 'Ts',  f'Ts limit ({self.tper_limit} s)', 'Cvel', f'Cvel limit ({self.cvel_limit} kt)', 'OP', 'Start/End OP']
-            ax2.legend(custom_lines, legend_names, loc='upper center', ncol=3, fontsize=9, framealpha=1, facecolor='white', bbox_to_anchor =(0.5,  1.25))
-        else:
-            ax.set_title(f'Workable Weather Window Analysis - Waves and Currents \nLimits: Hs = {self.swvht_limit} m,  Ts = {self.tper_limit} s,  Cvel = {self.cvel_limit}',
-                    fontweight='bold', fontsize=10)
-
-        # formating xticklabels and minorticks
-        ticks_loc = ax.get_xticks().tolist()
-        ax.xaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
-        ax.set_xticklabels(ticks_loc, rotation=0, ha='center')
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
-
-        from matplotlib.ticker import AutoMinorLocator
-        ax.xaxis.set_minor_locator(AutoMinorLocator(2))
-
-        if wowws == 'all':
-            for col in self.wowws:
-                ax.axvspan(self.wowws.loc['START', col], self.wowws.loc['END', col], facecolor='limegreen', alpha=0.6, zorder=1)
-        elif wowws == 'allowed':
-             for col in self.wowws_allowed:
-                ax.axvspan(self.wowws_allowed.loc['START', col], self.wowws_allowed.loc['END', col], facecolor='limegreen', alpha=0.6, zorder=1)
-        elif wowws == 'None':
+    @staticmethod
+    def calculate_duration(data:pd.DataFrame, format:str) -> pd.Series:
+        duration = data['end_date'] - data['start_date']
+        if format == 'days':
             pass
+        elif format == 'hours':
+            duration = duration.dt.total_seconds() / 3600
+        elif format == 'hours_minutes':
+            duration = duration.apply(Analysis.format_timedelta_to_hhmm)
+        return duration
 
-        if op_period:
-            self.plot_op_period(ax=ax)
+    @staticmethod
+    def format_timedelta_to_hhmm(td:timedelta) -> str:
+        total_minutes = int(td.total_seconds() // 60)
+        hours = total_minutes // 60
+        minutes = total_minutes % 60
+        return f"{hours:02d}:{minutes:02d}"
+         
+        
+        return duration
 
-        if times:
-            self.plot_times_table(ax=ax)
-
-        if stats:
-            self.plot_stats_table(ax=ax, wowws=wowws)
-
-
-    def plot_op_period(self, ax=None):
-        """
-        Plot op period
-        """
-        ax.axvspan(self.op_start, self.op_end, facecolor='darkgreen', alpha=0.5)
-
-
-    def plot_stats_table(self, ax=None, wowws='all'):
-
-        if wowws == 'all':
-            stats_table_srt = self.stats_table.copy()
-        elif wowws == 'allowed':
-            stats_table_srt = self.stats_table_allowed.copy()
-
-        for column in stats_table_srt.columns:
-            stats_table_srt.loc[['START', 'END'], column] = pd.to_datetime(stats_table_srt.loc[['START', 'END'], column]).dt.strftime("%Y-%m-%d %H:%M")
-        stats_table_srt.loc['DURATION'] = stats_table_srt.loc['DURATION'].astype('str').str.replace('days', 'days')
-
-        stats_table_srt = stats_table_srt.reindex(['Hs (mean \u00B1 std)', 'Hs (median)', 'Tp (mean \u00B1 std)', 'Tp (median)', 'Cvel (mean \u00B1 std)', 'Cvel (median)', 'START', 'END', 'DURATION'])
-
-        table_lenght = 0.25*stats_table_srt.shape[1]
-        table_woww = ax.table(cellText=stats_table_srt.values, colLabels=stats_table_srt.columns, rowLabels=stats_table_srt.index, cellLoc='center', rowLoc='right', bbox=[0.2, -1.4, table_lenght, 1.1])
-
-        from matplotlib.font_manager import FontProperties
-
-        for (row, col), cell in table_woww.get_celld().items():
-            if (row == 0) or (col == -1):
-                cell.set_text_props(fontproperties=FontProperties(weight='bold'))
+    @staticmethod
+    def calculate_duration_hours(data:pd.DataFrame) -> pd.Series:
+        return data['end_date'] - data['start_date']
 
 
-    def plot_times_table(self, ax):
-        wf_issuance = self.wf_issuance.strftime('%Y-%m-%d %H:%M')
-        op_start = self.op_start.strftime('%Y-%m-%d %H:%M')
-        op_end = self.op_end.strftime('%Y-%m-%d %H:%M')
-        tpop = str(self.tpop).replace('days', 'days')[0:12]
-        tc = str(self.cont_time).replace('days', 'days')[0:12]
-        tr = str(self.time_reference).replace('days', 'days')[0:12]
 
-        times_table_data = pd.DataFrame([tpop, tc, wf_issuance, tr, op_start, op_end])
-        times_table_index = ['OP PROC TIME', 'CONT TIME', 'WF ISSUANCE', 'REF TIME', 'OP START', 'OP END']
-    #     times_table_index = ['Tpop', 'Tc', 'Dprev', 'Tr', 'INÍCIO \nOPERAÇÃO', 'FIM \nOPERAÇÃO']
+class Plot:
+    """Handles plotting routines for the Analysis class."""
 
-        from matplotlib.font_manager import FontProperties
+    def __init__(self, analysis: Any) -> None:
+        self.analysis = analysis
+        self.operation = analysis.operation
+        self.data = analysis.data_wowws
+        self.wowws = analysis.wowws
 
-        op_table = ax.table(cellText=times_table_data.values, rowLabels=times_table_index, cellLoc='left', rowLoc='right', bbox=[1.38, -0.005, 0.21, 1.])
-        for (row, col), cell in op_table.get_celld().items():
-            if (col == -1):
-                cell.set_text_props(fontproperties=FontProperties(weight='bold'))
-
-
-    def woww_analysis_interactive(self,
-                                  width,
-                                  height):
-
+    @validate_call(config={"arbitrary_types_allowed": True})
+    def plot_wowws_timeseries(self) -> Figure:
+        """Generates a dual-y axis time series plot with WOWW and operation highlights."""
         fig = go.Figure()
 
-        # data
-        trace_swvht = go.Scatter(x=self.data['time'],
-                                 y=self.data['swvht'],
-                                name='Hs')
-        trace_tper = go.Scatter(x=self.data['time'],
-                                y=self.data['Tper'],
-                                name='Tp',
-                                yaxis='y2',
-                                line=dict(color="#FF0000"))
-        trace_cvel = go.Scatter(x=self.data['time'],
-                                y=self.data['cvel'],
-                                name='Current Vel',
-                                yaxis='y3')
-
-        fig.add_trace(trace_swvht)
-        fig.add_trace(trace_tper)
-        fig.add_trace(trace_cvel)
-
-
-        # Limits
-        # fig.add_hline(y=self.swvht_limit, line_width=1) # bug not corrected
-        # fig.add_hline(y=self.tper_limit, yref="y2", line_width=1)
-        # fig.add_hline(y=self.cvel_limit, yref="y3", line_width=1)
-        x0 = self.data['time'].min().values
-        x1 = self.data['time'].max().values
-
-
-        # fig.add_shape(type="line",
-        #                 xref="paper", yref="y2",
-        #                 x0=x0, y0=self.tper_limit, x1=x1, y1=self.tper_limit,
-        #                 line=dict(
-        #                     color="red",
-        #                     dash="dash",
-        #                     width=3
-        #                 )
-        #                 )
-        swvht_limit = go.Scatter(name='Hs limit',
-                            x=self.data['time'],
-                            y=np.repeat(self.swvht_limit, len(self.data['time'])),
-                            yaxis="y",
-                            line=dict(color="#0000ff",
-                                        dash="dash",
-                                        width=0.5) )
-
-        tper_limit = go.Scatter(name='Ts limit',
-                            x=self.data['time'],
-                            y=np.repeat(self.tper_limit, len(self.data['time'])),
-                            yaxis="y2",
-                            line=dict(color="#FF0000",
-                                        dash="dash",
-                                        width=0.5) )
-
-        cvel_limit = go.Scatter(name='Cvel limit',
-                            x=self.data['time'],
-                            y=np.repeat(self.cvel_limit, len(self.data['time'])),
-                            yaxis="y3",
-                            line=dict(color="#006400",
-                                        dash="dash",
-                                        width=0.5) )
-
-        fig.add_trace(swvht_limit)
-        fig.add_trace(tper_limit)
-        fig.add_trace(cvel_limit)
-
-
-
-        fig.update_layout(width=width, height=height,
-            template="simple_white",
-            # split the x-axis to fraction of plots in
-            # proportions
-            xaxis=dict(
-                domain=[0.05,1]
-            ),
-
-            # pass the y-axis title, titlefont, color
-            # and tickfont as a dictionary and store
-            # it an variable yaxis
-            yaxis=dict(
-                title="Hs (m)",
-                titlefont=dict(
-                    color="#0000ff"
-                ),
-                tickfont=dict(
-                    color="#0000ff"
-                )
-            ),
-
-            # pass the y-axis 2 title, titlefont, color and
-            # tickfont as a dictionary and store it an
-            # variable yaxis 2
-            yaxis2=dict(
-                title="Ts (s)",
-                titlefont=dict(
-                    color="#FF0000"
-                ),
-                tickfont=dict(
-                    color="#FF0000"
-                ),
-                anchor="free",  # specifying x - axis has to be the fixed
-                overlaying="y",  # specifyinfg y - axis has to be separated
-                side="left",  # specifying the side the axis should be present
-                position=0 # specifying the position of the axis
-            ),
-
-            # pass the y-axis 3 title, titlefont, color and
-            # tickfont as a dictionary and store it an
-            # variable yaxis 3
-            yaxis3=dict(
-                title="Cvel (kt)",
-                titlefont=dict(
-                    color="#006400"
-                ),
-                tickfont=dict(
-                    color="#006400"
-                ),
-                anchor="x",     # specifying x - axis has to be the fixed
-                overlaying="y",  # specifyinfg y - axis has to be separated
-                side="right"  # specifying the side the axis should be present
-            ),
-
-            legend=dict(y=1.15, x=0.5, orientation="h",xanchor='center'))
-
+        self._add_primary_trace(fig)
+        self._add_secondary_trace(fig)
+        self._add_wowws_highlights(fig)
+        self._add_operation_period(fig)
+        self._configure_layout(fig)
 
         return fig
+
+    def _add_primary_trace(self, fig: Figure) -> None:
+        fig.add_trace(go.Scatter(
+            x=self.data['date_time'], y=self.data['thgt'],
+            mode='lines', name='Value', yaxis='y1'
+        ))
+
+    def _add_secondary_trace(self, fig: Figure) -> None:
+        fig.add_trace(go.Scatter(
+            x=self.data['date_time'], y=self.data['tper'],
+            mode='lines', name='Tper', yaxis='y2'
+        ))
+
+    def _add_wowws_highlights(self, fig: Figure) -> None:
+        for idx, row in self.wowws.iterrows():
+            fig.add_vrect(
+                x0=row['start_date'], x1=row['end_date'],
+                fillcolor="green", opacity=0.3, layer="below", line_width=0,
+                annotation_text=f"WOWW {idx}",
+                annotation_position="top left",
+                annotation=dict(font=dict(color="white"))
+            )
+
+    def _add_operation_period(self, fig: Figure) -> None:
+        fig.add_vrect(
+            x0=self.operation.start_datetime,
+            x1=self.operation.estimated_end_datetime,
+            fillcolor="blue", opacity=0.3, layer="below", line_width=0,
+            annotation_text="OPERATION",
+            annotation_position="top right",
+            annotation=dict(font=dict(color="white"))
+        )
+
+    def _configure_layout(self, fig: Figure) -> None:
+        fig.update_layout(
+            font=dict(color='white'),
+            height=200,
+            margin=dict(l=0, r=0, t=0, b=0),
+            xaxis=dict(
+                tickfont=dict(color='white'),
+                color='white'
+            ),
+            yaxis=dict(
+                title=dict(text='Hs (m)', font=dict(color='white')),
+                side='left',
+                showgrid=True,
+                zeroline=False,
+                tickfont=dict(color='white'),
+                color='white'
+            ),
+            yaxis2=dict(
+                title=dict(text='Tp (s)', font=dict(color='white')),
+                overlaying='y',
+                side='right',
+                showgrid=False,
+                zeroline=False,
+                tickfont=dict(color='white'),
+                color='white'
+            ),
+            legend=dict(
+                x=0.01, y=0.99,
+                font=dict(color='white')
+            ),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(255, 255, 255, 0.1)'
+        )
+
+
+# class Plot:
+#     @validate_call(config={"arbitrary_types_allowed": True})
+#     def __init__(self, analysis):
+#         self.analysis = analysis
+#         self.operation = self.analysis.operation
+
+#     def plot_wowws_timeseries(self) -> None:
+#         fig = go.Figure()
+
+#         data = self.analysis.data_wowws
+#         wowws = self.analysis.wowws
+
+#         # Primary y-axis trace (value)
+#         fig.add_trace(go.Scatter(
+#             x=data['date_time'], y=data['thgt'], 
+#             mode='lines', name='Value',
+#             yaxis='y1'
+#         ))
+
+#         # Secondary y-axis trace (tper)
+#         fig.add_trace(go.Scatter(
+#             x=data['date_time'], y=data['tper'], 
+#             mode='lines', name='Tper',
+#             yaxis='y2'
+#         ))
+
+#         # Add vertical highlight regions
+#         for idx, row in wowws.iterrows():
+#             fig.add_vrect(
+#                 x0=row['start_date'], x1=row['end_date'],
+#                 fillcolor="green", opacity=0.3,
+#                 layer="below", line_width=0,
+#                 annotation_text=f"WOWW {idx}",
+#                 annotation_position="top left",
+#                 annotation=dict(font=dict(color="white"))
+#             )
+
+#         # Operation period highlight
+#         fig.add_vrect(
+#             x0=self.operation.start_datetime, 
+#             x1=self.operation.estimated_end_datetime, 
+#             fillcolor="blue", opacity=0.3,
+#             layer="below", line_width=0,
+#             annotation_text=f"OPERATION",
+#             annotation_position="top right",
+#             annotation=dict(font=dict(color="white"))
+#         )
+
+#         # Layout update for dual y-axes and styling
+#         fig.update_layout(
+#             # title=dict(text="Time Series with Highlights and Twin Y-Axis", font=dict(color='white')),
+#             font=dict(color='white'),  # General font color
+#             height=200,  # match the container height
+#             margin=dict(l=0, r=0, t=0, b=0),  # remove all outer space
+#             xaxis=dict(
+#                 # title=dict(text='Time', font=dict(color='white')),
+#                 tickfont=dict(color='white'),
+#                 color='white'
+#             ),
+#             yaxis=dict(
+#                 title=dict(text='Hs (m)', font=dict(color='white')),
+#                 side='left',
+#                 showgrid=True,
+#                 zeroline=False,
+#                 tickfont=dict(color='white'),
+#                 color='white'
+#             ),
+#             yaxis2=dict(
+#                 title=dict(text='Tp (s)', font=dict(color='white')),
+#                 overlaying='y',
+#                 side='right',
+#                 showgrid=False,
+#                 zeroline=False,
+#                 tickfont=dict(color='white'),
+#                 color='white'
+#             ),
+#             legend=dict(
+#                 x=0.01, y=0.99,
+#                 font=dict(color='white')
+#             ),
+#             paper_bgcolor='rgba(0,0,0,0)',
+#             plot_bgcolor='rgba(255, 255, 255, 0.1)'
+#         )
+
+#         return fig
+ 
+    
+    
+class StatsTable:
+    @validate_call(config={"arbitrary_types_allowed": True})
+    def __init__(self, analysis):
+        self.analysis = analysis
+
+    @property
+    def global_stats(self) -> pd.DataFrame:
+        return self.analysis.wowws[['thgt', 'tper', 'tdir']].describe().round(2)
+    
+    @property
+    def per_woww_stats(self) -> pd.DataFrame:
+        return self.analysis.wowws.groupby('woww_id').describe().T.loc[['thgt', 'tper', 'tdir']]
+
+class Dashboard:
+    pass
+
+
+if __name__ == "__main__":
+
+    mo = MaritimeOperation(
+                thgt_limit=5,
+                 tper_limit=16.,
+                 start_datetime=datetime(2025,6,1,10,0,0),
+                 duration=timedelta(hours=5),
+                 first_contingency_factor=1.1,
+                 second_contingency_factor=1.2,
+    )
+
+
+    fd = ForecastData(forecast_data="data/ww3_LAT-32_LON115.csv")
+
+    a = Analysis(mo, fd)
+
+    p = Plot(a)
+    # p.plot_wowws_timeseries()
+
+
+    print("script finished")
