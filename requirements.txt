@@ -2,7 +2,8 @@ pandas
 xarray
 matplotlib
 dotenv
-erdappy
+erddapy
 pydantic
 dash
 dash-leaflet
+gunicorn
