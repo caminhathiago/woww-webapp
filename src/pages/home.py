@@ -14,14 +14,35 @@ default_scf = "1"
 
 home_layout = html.Div([
     # Floating Input Box
+   html.Div([
+    html.Button("☰", id="toggle-input-box", n_clicks=0, className="toggle-button"),
     html.Div([
-        html.H3("Workable Weather Window Analysis"),
+        html.H3("Workable Weather Windows"),
         html.H5("Maritime Operation Settings"),
 
-        inline_input("Latitude:", "lat-input", "number", value=default_lat, step=1),
-        inline_input("Longitude:", "lon-input", "number", value=default_lon, step=1),
+        html.Div([
+    html.Label("Location:"),
+    dcc.Input(id="lat-input", type="number", value=default_lat, step=1),
+    dcc.Input(id="lon-input", type="number", value=default_lon, step=1)
+], className="input-location-group"),
+
         inline_input("Start:", "start-input", "text", value=default_start),
         inline_input("Duration (h):", "duration-input", "number", value=default_duration, step=0.1),
+        
+        html.Div([
+    # html.Label("Forecasts Required:", className="input-label"),
+    dcc.Dropdown(
+        id="parameter-dropdown",
+        options=[
+            {"label": "Waves", "value": "wave_height"},
+            {"label": "Wind", "value": "wind_speed"},
+        ],
+        multi=True,
+        placeholder="Forecasts Required",
+        className="dropdown"
+    )
+], className="input-parameters-group"),
+        
         inline_input("Hs Limit:", "hs-limit-input", "number", value=default_fcf, step=0.1),
         inline_input("Tp Limit:", "tp-limit-input", "number", value=default_fcf, step=0.1),
         inline_input("1st Cont Factor:", "fcf-input", "number", value=default_fcf, step=0.1),
@@ -29,15 +50,10 @@ home_layout = html.Div([
 
         dcc.Loading([html.Div(id="forecast-loader")], type="circle"),
 
-        html.Button(
-            "Extracting Forecast",
-            id="generate-button",
-            disabled=True
-        ),
-
+        html.Button("Extracting Forecast", id="generate-button", disabled=True),
         dcc.Store(id="forecast-ready", data=False),
-
-    ], id="input-box"),
+    ], id="input-box", className="input-box collapsed")
+], id="collapsible-container", className="collapsible-container"),
 
     html.Div([
         dcc.Graph(
@@ -63,7 +79,7 @@ home_layout = html.Div([
                 draggable=False,
                 icon=dict(
                     iconUrl="assets/marker.png",
-                    iconSize=[20, 20],
+                    iconSize=[40, 40],
                     iconAnchor=[0, 20],
                     popupAnchor=[-3, -76]
                     # iconSize=[30, 40],

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from dash import callback_context
 from dash.dependencies import Input, Output, State
+from dash.exceptions import PreventUpdate
 import plotly.graph_objs as go
 
 from woww.api.erddap import ErddapData
@@ -82,9 +83,9 @@ def register_callbacks(app):
     )
     def update_generate_button(forecast_ready):
         if forecast_ready:
-            return {"display": "block", "marginTop": "10px", "width": "100%", "backgroundColor": "rgba(12.94, 39.22, 46.67, 1)", "color": "white"}, "Generate", False
+            return {"display": "block"}, "Perform Analysis", False
         else:
-            return {"display": "block", "marginTop": "10px", "width": "100%"}, "Extracting Forecast...", True
+            return {"display": "block"}, "Extracting Forecast...", True
 
     @app.callback(
         Output("timeseries-plot", "figure"),
@@ -167,8 +168,17 @@ def register_callbacks(app):
     # Input("map", "mousemove"),
     # )
     # def update_mouse_coords(event):
-        if event is None:
-            return ""
-        lat = event["latlng"]["lat"]
-        lon = event["latlng"]["lng"]
-        return f"Lat: {lat:.4f}, Lon: {lon:.4f}"
+        # if event is None:
+        #     return ""
+        # lat = event["latlng"]["lat"]
+        # lon = event["latlng"]["lng"]
+        # return f"Lat: {lat:.4f}, Lon: {lon:.4f}"
+
+    @app.callback(Output("input-box", "className"),
+    Input("toggle-input-box", "n_clicks"),
+    State("input-box", "className"),
+    prevent_initial_call=True)
+    def toggle_input_box(n_clicks, current_class):
+        if "collapsed" in current_class:
+            return "input-box expanded"
+        return "input-box collapsed"
